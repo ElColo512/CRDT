@@ -1,1 +1,300 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Editor CRDT</title>
+<style>
+:root{
+    --blue:#17365d;
+    --light:#eaf2f8;
+    --green:#1d8f5a;
+    --red:#c0392b;
+    --ink:#1f2937
+}
 
+*{box-sizing:border-box} 
+
+body{
+    margin:0;
+    background:#f4f7fb;
+    color:var(--ink);
+    font-family:Segoe UI,Arial,sans-serif
+}
+
+header{
+    background:linear-gradient(135deg,#17365d,#2f5597);
+    color:white;
+    padding:22px 5vw;
+    display:flex;
+    justify-content:space-between;
+    align-items:center
+}
+
+header h1{
+    margin:0;
+    font-size:25px
+}
+
+.badge{
+    padding:8px 13px;
+    border-radius:999px;
+    background:#ffffff22;
+    font-weight:700
+}
+
+main{
+    max-width:1050px;
+    margin:28px auto;
+    padding:0 18px;
+    display:grid;
+    grid-template-columns:2fr 1fr;
+    gap:20px
+}
+
+.card{
+    background:white;
+    border-radius:14px;
+    box-shadow:0 8px 24px #17365d18;
+    padding:20px
+}
+
+h2{
+    margin-top:0;
+    color:var(--blue)
+}
+
+textarea{
+    width:100%;
+    min-height:420px;
+    border:2px solid #bdd0e4;
+    border-radius:10px;
+    padding:18px;
+    font:20px/1.55 Georgia,serif;resize:vertical;outline:none
+}
+
+textarea:focus{
+    border-color:#2f5597;
+    box-shadow:0 0 0 4px #2f559722
+}
+
+.row{
+    display:flex;
+    gap:10px;
+    flex-wrap:wrap;
+    margin-top:14px
+}
+
+button{
+    border:0;
+    border-radius:9px;
+    padding:11px 14px;
+    font-weight:700;
+    cursor:pointer;
+    background:#2f5597;
+    color:white
+}
+
+button.warn{
+    background:#d97706
+}
+
+button.danger{
+    background:#b91c1c
+}
+
+.status{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    font-weight:700
+}
+
+.dot{
+    width:12px;
+    height:12px;
+    border-radius:50%;
+    background:var(--green)
+}
+
+.dot.off{
+    background:var(--red)
+}
+
+dl{
+    display:grid;
+    grid-template-columns:auto 1fr;
+    gap:9px;
+    margin:0
+}
+
+dt{
+    font-weight:700;
+    color:#415a77
+}
+
+dd{
+    margin:0;
+    word-break:break-word
+}
+
+.hint{
+    background:var(--light);
+    border-left:4px solid #2f5597;
+    padding:12px;
+    margin-top:18px;
+    border-radius:6px;
+    font-size:14px
+}
+
+@media(max-width:780px){
+    main{grid-template-columns:1fr}
+    textarea{min-height:320px}
+    }
+</style>
+</head>
+<body>
+<header>
+    <div>
+        <h1>Documento colaborativo CRDT</h1>
+        <div id="nodeName">Cargando nodo...</div>
+    </div>
+</header>
+<main>
+<section class="card">
+    <h2>Documento compartido</h2>
+    <textarea id="editor" spellcheck="false"></textarea>
+    <div class="row">
+        <button id="toggle" class="warn">Simular partición</button>
+        <button id="reset" class="danger">Reiniciar este nodo</button>
+    </div>
+</section>
+<aside class="card">
+    <h2>Estado del nodo</h2>
+    <p class="status">
+        <span id="dot" class="dot"></span>
+        <span id="statusText">Conectando...</span></p>
+        <dl>
+            <dt>Nodo</dt>
+            <dd id="nodeId">-</dd>
+            <dt>Caracteres visibles</dt>
+            <dd id="visible">-</dd>
+            <dt>Tombstones</dt>
+            <dd id="tombstones">-</dd>
+            <dt>Pares</dt>
+            <dd id="peers">-</dd>
+        </dl>
+        <div class="hint">
+            <strong>Qué se demuestra:</strong>
+            <br>
+            edición local, partición simulada, cambios concurrentes, intercambio de estado y convergencia determinista.
+        </div>
+    </aside>
+</main>
+<script>
+const editor=document.querySelector('#editor');
+let current='';
+let timer=null;
+let applying=false;
+let sending=false;
+let pending=false;
+let ws=null;
+let reconnectTimer=null;
+
+function render(s){
+  document.querySelector('#nodeName').textContent=s.node_name;
+  document.querySelector('#nodeId').textContent=s.node_id;
+  document.querySelector('#visible').textContent=s.visible_count;
+  document.querySelector('#tombstones').textContent=s.tombstones;
+  document.querySelector('#peers').textContent=s.peers.join(', ')||'ninguno';
+  document.querySelector('#statusText').textContent=s.sync_enabled?'Sincronización activa':'Nodo aislado';
+  document.querySelector('#dot').className=s.sync_enabled?'dot':'dot off';
+  document.querySelector('#toggle').textContent=s.sync_enabled?'Simular partición':'Restablecer conexión';
+
+  // Si no hay una edición local en vuelo, el backend es la fuente de verdad.
+  if(s.text!==current && !sending){
+    applying=true;
+    const pos=editor.selectionStart;
+    editor.value=s.text;
+    current=s.text;
+    editor.setSelectionRange(Math.min(pos,current.length),Math.min(pos,current.length));
+    applying=false;
+  }
+}
+
+async function refreshState(){
+  try{
+    const response=await fetch('/api/state',{cache:'no-store'});
+    if(!response.ok)return;
+    render(await response.json());
+  }catch(_){
+    // Durante un corte real de red el servidor remoto puede no ser accesible.
+    // El siguiente sondeo o la reconexión del WebSocket lo volverán a intentar.
+  }
+}
+
+async function sendEdit(){
+  if(sending){pending=true;return;}
+  const next=editor.value;
+  if(next===current)return;
+  sending=true;
+  const old=current;
+  try{
+    const response=await fetch('/api/edit',{
+      method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({old_text:old,new_text:next})
+    });
+    if(response.ok){
+      const state=await response.json();
+      current=next;
+      render(state);
+    }
+  }catch(_){} finally{
+    sending=false;
+    if(pending || editor.value!==current){
+      pending=false;clearTimeout(timer);timer=setTimeout(sendEdit,700);
+    }
+  }
+}
+
+editor.addEventListener('input',()=>{
+  if(applying)return;
+  clearTimeout(timer);
+  timer=setTimeout(sendEdit,700);
+});
+
+function connectWebSocket(){
+  clearTimeout(reconnectTimer);
+  const proto=location.protocol==='https:'?'wss':'ws';
+  ws=new WebSocket(`${proto}://${location.host}/ws`);
+
+  ws.onopen=()=>{
+    ws.send('hola');
+    refreshState();
+  };
+  ws.onmessage=e=>render(JSON.parse(e.data));
+  ws.onclose=()=>{
+    reconnectTimer=setTimeout(connectWebSocket,1500);
+  };
+  ws.onerror=()=>{
+    try{ws.close();}catch(_){}
+  };
+}
+
+document.querySelector('#toggle').onclick=async()=>{
+  await fetch('/api/sync/toggle',{method:'POST'});
+  await refreshState();
+};
+
+document.querySelector('#reset').onclick=async()=>{
+  if(confirm('¿Reiniciar sólo este nodo?')){
+    await fetch('/api/reset',{method:'POST'});
+    await refreshState();
+  }
+};
+
+connectWebSocket();
+refreshState();
+setInterval(refreshState,2000);
+</script>
+</body>
+</html>
