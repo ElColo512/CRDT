@@ -1,0 +1,26 @@
+services:
+  crdt-node:
+    build: .
+    restart: unless-stopped
+    environment:
+      # Identidad única del nodo. Se obtiene del archivo .env.
+      NODE_ID: ${NODE_ID:?Define NODE_ID en .env}
+      NODE_NAME: ${NODE_NAME:-Nodo CRDT}
+
+      # Lista de nodos remotos separada por comas.
+      PEERS: ${PEERS:-}
+
+      # Clave compartida usada exclusivamente entre nodos al hacer merge.
+      PEER_TOKEN: ${PEER_TOKEN:?Define PEER_TOKEN en .env}
+      SEED_TEXT: ${SEED_TEXT:-hola mundo!}
+
+      # El estado se escribe en el volumen persistente, no dentro del contenedor.
+      DATA_FILE: /data/state.json
+    ports:
+      - "${HOST_PORT:-8000}:8000"
+    volumes:
+      - crdt_data:/data
+
+volumes:
+  # Este volumen conserva el CRDT aunque el contenedor sea recreado.
+  crdt_data:
