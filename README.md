@@ -30,7 +30,7 @@ Atom(id, position, block_id, offset, value, deleted)
 
 ## Configuración
 
-Cada carpeta incluye un `.env`.
+Cada carpeta incluye un `.env`. Copiar el .env de crdt-local a la carpeta principal junto al archivo compose para levantar el nodo local.
 
 ### Nodo A, notebook local
 
