@@ -30,63 +30,136 @@ Atom(id, position, block_id, offset, value, deleted)
 
 ## Configuración
 
-Cada carpeta incluye un `.env`. Copiar el .env de crdt-local a la carpeta principal junto al archivo compose para levantar el nodo local.
+El repositorio contiene los mismos archivos de aplicación para ambos nodos. Los archivos `.env` están separados en las carpetas `crdt-local/` y `crdt-servidor/`.
 
-### Nodo A, notebook local
+Para levantar el **Nodo A local**, copiar el `.env` de `crdt-local/` a la carpeta principal del proyecto, junto a `compose.yaml`:
+
+```powershell
+Copy-Item .\crdt-local\.env .\.env
+```
+
+Para preparar el **Nodo B**, utilizar el `.env` de `crdt-servidor/` al desplegar el proyecto en el servidor.
+
+> **Nota para reproducir la demo:** los valores actuales de `PEERS` corresponden al entorno utilizado durante la demostración. Si se desea ejecutar el proyecto en otras máquinas o servidores, hay que modificar `PEERS` en ambos `.env` para que cada nodo apunte a una dirección HTTP accesible del otro. Ambos nodos deben utilizar el mismo `PEER_TOKEN`.
+
+### Configuración utilizada en la demostración
+
+#### Nodo A, notebook local
 
 ```env
 NODE_ID=A
 NODE_NAME=Nodo local
 PEERS=http://sd-2026.tailb9d8eb.ts.net:18010
-PEER_TOKEN= Clave segura para ambos
+PEER_TOKEN=Clave segura para ambos
 SEED_TEXT=hola mundo!
 HOST_PORT=8000
 ```
 
-### Nodo B, servidor de prácticas
+#### Nodo B, servidor de prácticas
 
 ```env
 NODE_ID=B
 NODE_NAME=Nodo servidor
 PEERS=http://gustavo-ntb:8000
-PEER_TOKEN= Clave segura para ambos
+PEER_TOKEN=Clave segura para ambos
 SEED_TEXT=hola mundo!
 HOST_PORT=8080
 ```
 
 ## Puesta en marcha
 
-En cada nodo, desde la carpeta del proyecto:
+### 1. Levantar el Nodo A local
 
-```bash
+Desde PowerShell, situarse en la carpeta principal del proyecto, donde se encuentra `compose.yaml`:
+
+```powershell
+Copy-Item .\crdt-local\.env .\.env
 docker compose up -d --build
 ```
 
-Comprobar los contenedores:
+`docker compose up -d --build` construye la imagen antes de iniciar el servicio y lo deja ejecutándose en segundo plano. 
 
-```bash
-docker ps
+Comprobar el contenedor:
+
+```powershell
+docker compose ps
 ```
 
-Comprobar salud:
+Comprobar la API local:
 
-```bash
-curl http://localhost:8000/health
+```powershell
+Invoke-RestMethod "http://localhost:8000/health"
 ```
 
-En el servidor, internamente:
+La interfaz del Nodo A queda disponible en:
+
+```text
+http://localhost:8000
+```
+
+### 2. Preparar y subir el Nodo B al servidor
+
+Los comandos siguientes reproducen el despliegue utilizado en la demostración. Si se utiliza otro servidor, reemplazar el usuario, host, puerto SSH y rutas por los correspondientes.
+
+Primero se recomienda crear una copia limpia del proyecto para el servidor. Debe contener los mismos archivos de aplicación que el nodo local, pero utilizando el `.env` de `crdt-servidor/`.
+
+Desde PowerShell, situado en la carpeta que contiene el proyecto, copiar la carpeta al servidor mediante `scp`:
+
+```powershell
+scp -P <PUERTO_SSH> -r ".\crdt-servidor" <USUARIO>@<SERVIDOR>:~/
+```
+
+`scp` permite copiar archivos entre equipos a través de una conexión SSH; `-P` selecciona el puerto remoto y `-r` copia una carpeta de forma recursiva.
+
+> Si la carpeta `crdt-servidor/` del repositorio contiene únicamente el `.env`, antes de ejecutar este comando hay que preparar una carpeta de despliegue con los archivos comunes del proyecto (`app/`, `Dockerfile`, `compose.yaml` y `requirements.txt`) y colocar dentro el `.env` de `crdt-servidor/`. El código de ambos nodos es el mismo; cambia la configuración del `.env`.
+
+### 3. Levantar el Nodo B en el servidor
+
+Conectarse al servidor por SSH:
+
+```powershell
+ssh -p <PUERTO_SSH> <USUARIO>@<SERVIDOR>
+```
+
+Una vez conectado:
+
+```bash
+cd ~/crdt-servidor
+ls -la
+docker compose up -d --build
+```
+
+Comprobar que el servicio está levantado:
+
+```bash
+docker compose ps
+```
+
+Comprobar la API desde el propio servidor:
 
 ```bash
 curl http://localhost:8080/health
 ```
 
-Desde la notebook hacia el servidor:
+En la infraestructura utilizada para la demostración, la aplicación del servidor se publica externamente mediante una redirección hacia el puerto configurado en el host. En otros entornos, la URL externa dependerá de la configuración de red del servidor.
+
+### 4. Comprobar la comunicación entre los dos nodos
+
+Desde la notebook, comprobar el Nodo A:
 
 ```powershell
-Invoke-RestMethod "http://sd-2026.tailb9d8eb.ts.net:18010/health"
+(Invoke-RestMethod "http://localhost:8000/api/state").text
 ```
 
-## Acceso a la interfaz
+Y comprobar el Nodo B utilizando su dirección accesible:
+
+```powershell
+(Invoke-RestMethod "http://<DIRECCION_NODO_B>:<PUERTO>/api/state").text
+```
+
+Cuando ambos nodos pueden alcanzar las direcciones configuradas en `PEERS`, la sincronización se realiza automáticamente.
+
+### Acceso utilizado durante la demostración
 
 - Nodo A: `http://localhost:8000`
 - Nodo B: `http://sd-2026.tailb9d8eb.ts.net:18010`
